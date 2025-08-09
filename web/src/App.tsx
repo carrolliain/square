@@ -5,6 +5,7 @@ import { DPad } from './components/DPad';
 import { HUD } from './components/HUD';
 import type { ControlKey, GameState } from './types';
 import { createInitialState, setupLevel, tryMove } from './gameLogic';
+import { enemy1Tick, enemy1bTick } from './logic/enemy1';
 import { useKeyboard } from './hooks/useKeyboard';
 import { useSwipe } from './hooks/useSwipe';
 
@@ -38,6 +39,49 @@ function App() {
     window.addEventListener('set-level', onSetLevel as any);
     return () => window.removeEventListener('set-level', onSetLevel as any);
   }, []);
+
+  // Enemy roaming ticker: independent of player moves
+  useEffect(() => {
+    let raf = 0;
+    let last1 = performance.now();
+    let lastB = performance.now();
+    const stepMs1 = 450; // enemy1 speed
+    const stepMsB = 520; // enemy1b speed
+    const loop = (t: number) => {
+      raf = requestAnimationFrame(loop);
+      setState((s) => {
+        if (s.level < 21) return s;
+        let next: GameState = s;
+        // enemy1 timer
+        if (next.enemy && t - last1 >= stepMs1) {
+          last1 = t;
+          const e1 = enemy1Tick(next);
+          next = { ...next, enemy: e1.pos, enemyDir: e1.dir as any, enemyTarget: e1.target, enemyStepBudget: e1.stepBudget, enemyVisited: e1.visited } as any;
+          if (next.player.x === e1.pos.x && next.player.y === e1.pos.y) {
+            const levelGateActive = next.level >= 6;
+            const restoredKey = (next as any).initialKey ?? null;
+            const restoredPortalAKey = (next as any).initialPortalAKey ?? null;
+            next = { ...next, player: { x: 0, y: 0 }, hasKey: false, key: restoredKey, hasPortalAKey: false, portalAKey: restoredPortalAKey, gateActive: levelGateActive } as GameState;
+          }
+        }
+        // enemy1b timer
+        if (next.level >= 24 && (next as any).enemy1b && t - lastB >= stepMsB) {
+          lastB = t;
+          const eb = enemy1bTick(next);
+          next = { ...next, enemy1b: eb.pos, enemy1bDir: eb.dir as any, enemy1bTarget: eb.target, enemy1bStepBudget: eb.stepBudget, enemy1bVisited: eb.visited } as any;
+          if (next.player.x === (next as any).enemy1b.x && next.player.y === (next as any).enemy1b.y) {
+            const levelGateActive = next.level >= 6;
+            const restoredKey = (next as any).initialKey ?? null;
+            const restoredPortalAKey = (next as any).initialPortalAKey ?? null;
+            next = { ...next, player: { x: 0, y: 0 }, hasKey: false, key: restoredKey, hasPortalAKey: false, portalAKey: restoredPortalAKey, gateActive: levelGateActive } as GameState;
+          }
+        }
+        return next;
+      });
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [state.level]);
 
   const onResizeCell = useCallback((cellPx: number) => {
     setState((s) => ({ ...s, cellSizePx: cellPx }));
