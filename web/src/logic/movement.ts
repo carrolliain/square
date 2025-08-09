@@ -2,6 +2,7 @@ import type { ControlKey, GameState, Point } from '../types';
 import { isInsideRect } from './geometry';
 import { isBlocked } from './blocked';
 import { nextLevel } from './level';
+// Enemy movement is now handled by a ticker in App.tsx (enemyTick)
 
 export function tryMove(prev: GameState, keyName: ControlKey): GameState {
   const mapping = prev.currentMapping;
@@ -83,7 +84,7 @@ export function tryMove(prev: GameState, keyName: ControlKey): GameState {
 
   ({ cx, cy, usedPortal } = attemptPortalTeleport());
 
-  const updated: GameState = {
+  let updated: GameState = {
     ...prev,
     player: { x: cx, y: cy },
     hasKey,
@@ -93,10 +94,31 @@ export function tryMove(prev: GameState, keyName: ControlKey): GameState {
     usedPortal,
   };
 
+  // If player moved onto enemy, trigger reset before enemy moves
+  const touchedEnemyNow = updated.enemy && updated.player.x === updated.enemy.x && updated.player.y === updated.enemy.y;
+  if (touchedEnemyNow) {
+    updated = resetOnEnemyTouch(updated);
+  }
+
   if (updated.player.x === updated.hole.x && updated.player.y === updated.hole.y) {
     return nextLevel(updated);
   }
   return updated;
+}
+
+function resetOnEnemyTouch(st: GameState): GameState {
+  const levelGateActive = st.level >= 6;
+  const restoredKey = st.initialKey ?? null;
+  const restoredPortalAKey = st.initialPortalAKey ?? null;
+  return {
+    ...st,
+    player: { x: 0, y: 0 },
+    hasKey: false,
+    key: restoredKey,
+    hasPortalAKey: false,
+    portalAKey: restoredPortalAKey,
+    gateActive: levelGateActive,
+  } as GameState;
 }
 
 

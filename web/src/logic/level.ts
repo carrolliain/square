@@ -59,6 +59,13 @@ export function setupLevel(prev: GameState, internal?: { skipValidate?: boolean 
   st.blockedTiles = [];
   st.islandRects = [] as any;
   st.usedPortal = false;
+  (st as any).enemy = null;
+  (st as any).enemyDir = 'down';
+  (st as any).enemyTarget = null;
+  (st as any).enemyStepBudget = 0;
+  (st as any).enemyVisited = Array.from({ length: st.gridSize }, () => Array(st.gridSize).fill(0));
+  (st as any).initialKey = null;
+  (st as any).initialPortalAKey = null;
 
   // Occupancy matrix to prevent collisions
   const used = new Set<string>();
@@ -79,6 +86,7 @@ export function setupLevel(prev: GameState, internal?: { skipValidate?: boolean 
       isOrthAdjacent(k.x, k.y, st.hole.x, st.hole.y)
     ) && guard < 400);
     st.key = k;
+    (st as any).initialKey = k;
   }
 
   if (level >= 11 && level < 16) {
@@ -164,6 +172,7 @@ export function setupLevel(prev: GameState, internal?: { skipValidate?: boolean 
         isAdjToAny(k.x, k.y, [st.portalEntry!, st.portalExit!, st.hole])
       ) && guard < 400);
       st.key = k ?? { x: 1, y: st.gridSize - 2 } as any;
+      (st as any).initialKey = st.key;
       reserve(st.key.x, st.key.y);
     }
   }
@@ -270,6 +279,7 @@ export function setupLevel(prev: GameState, internal?: { skipValidate?: boolean 
       isAdjToAny(st.portalAKey.x, st.portalAKey.y, [st.portalBExit!, st.portalAExit!, st.hole])
     ) && guard < 200);
     reserve(st.portalAKey.x, st.portalAKey.y);
+    (st as any).initialPortalAKey = st.portalAKey;
 
     st.portalBLocked = false;
     guard = 0;
@@ -337,7 +347,49 @@ export function setupLevel(prev: GameState, internal?: { skipValidate?: boolean 
         st.key = { x: Math.min(innerB.xMax, Math.max(innerB.xMin, B.ix + Math.floor(islandW/2))), y: Math.min(innerB.yMax, Math.max(innerB.yMin, B.iy + Math.floor(islandH/2))) } as any;
       }
     }
-    if (st.key) reserve(st.key.x, st.key.y);
+    if (st.key) {
+      reserve(st.key.x, st.key.y);
+      (st as any).initialKey = st.key;
+    }
+  }
+
+  // Place enemy for level 21+
+  if (level >= 21) {
+    const isInsideAnyIsland = (x: number, y: number): boolean => {
+      const rects = st.islandRects || [];
+      for (const r of rects) {
+        if (isInsideRect(x, y, r.x, r.y, r.w, r.h)) return true;
+      }
+      return false;
+    };
+    // Spawn enemy only on mainland walkable tiles, not on any asset
+    const reachable = bfsReachableOpenCells(st.gridSize, st.blockedTiles, (x, y) => isInsideAnyIsland(x, y));
+    const isAsset = (x: number, y: number) => (
+      (st.hole && st.hole.x === x && st.hole.y === y) ||
+      (st.key && st.key.x === x && st.key.y === y) ||
+      (st.portalEntry && st.portalEntry.x === x && st.portalEntry.y === y) ||
+      (st.portalExit && st.portalExit.x === x && st.portalExit.y === y) ||
+      (st.portalAEntry && st.portalAEntry.x === x && st.portalAEntry.y === y) ||
+      (st.portalAExit && st.portalAExit.x === x && st.portalAExit.y === y) ||
+      (st.portalBEntry && st.portalBEntry.x === x && st.portalBEntry.y === y) ||
+      (st.portalBExit && st.portalBExit.x === x && st.portalBExit.y === y) ||
+      ((st as any).portalAKey && (st as any).portalAKey.x === x && (st as any).portalAKey.y === y) ||
+      ((st as any).portalKey && (st as any).portalKey.x === x && (st as any).portalKey.y === y)
+    );
+    let candidates = reachable.filter((p) => (p.x !== 0 || p.y !== 0) && !isTaken(p.x, p.y, st, {}) && !isAsset(p.x, p.y));
+    if (candidates.length === 0) candidates = reachable.filter((p) => p.x !== 0 || p.y !== 0);
+    let enemyPos = candidates.length ? candidates[randomInt(candidates.length)] : { x: st.gridSize - 1, y: st.gridSize - 1 } as Point;
+    const passable = (p: Point) => p.x >= 0 && p.y >= 0 && p.x < st.gridSize && p.y < st.gridSize && !isBlocked(p.x, p.y, st.blockedTiles) && !isInsideAnyIsland(p.x, p.y) && !isTaken(p.x, p.y, st, {});
+    if (!passable(enemyPos)) {
+      const nearStart: Point[] = [ { x: 1, y: 0 }, { x: 0, y: 1 }, { x: 1, y: 1 } ];
+      const pick = nearStart.find(passable);
+      if (pick) enemyPos = pick;
+    }
+    (st as any).enemy = enemyPos;
+    (st as any).enemyDir = 'down';
+    (st as any).enemyTarget = null;
+    (st as any).enemyStepBudget = 0;
+    (st as any).enemyVisited = Array.from({ length: st.gridSize }, () => Array(st.gridSize).fill(0));
   }
 
   if (level >= 8) {

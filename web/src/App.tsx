@@ -5,6 +5,7 @@ import { DPad } from './components/DPad';
 import { HUD } from './components/HUD';
 import type { ControlKey, GameState } from './types';
 import { createInitialState, setupLevel, tryMove } from './gameLogic';
+import { enemyTick } from './logic/enemyAI';
 import { useKeyboard } from './hooks/useKeyboard';
 import { useSwipe } from './hooks/useSwipe';
 
@@ -38,6 +39,43 @@ function App() {
     window.addEventListener('set-level', onSetLevel as any);
     return () => window.removeEventListener('set-level', onSetLevel as any);
   }, []);
+
+  // Enemy roaming ticker: independent of player moves
+  useEffect(() => {
+    let raf = 0;
+    let last = performance.now();
+    const stepMs = 450; // slower enemy1: moves every 450ms
+    const loop = (t: number) => {
+      raf = requestAnimationFrame(loop);
+      if (state.level < 21 || !state.enemy) return;
+      if (t - last < stepMs) return;
+      last = t;
+      setState((s) => {
+        if (s.level < 21 || !s.enemy) return s;
+        const { pos, dir, target, stepBudget, visited } = enemyTick(s);
+        let next: GameState = { ...s, enemy: pos, enemyDir: dir as any, enemyTarget: target, enemyStepBudget: stepBudget, enemyVisited: visited } as any;
+        // Collision check: if enemy reaches player, reset
+        if (next.player.x === pos.x && next.player.y === pos.y) {
+          // simulate touch behavior
+          const levelGateActive = next.level >= 6;
+          const restoredKey = (next as any).initialKey ?? null;
+          const restoredPortalAKey = (next as any).initialPortalAKey ?? null;
+          next = {
+            ...next,
+            player: { x: 0, y: 0 },
+            hasKey: false,
+            key: restoredKey,
+            hasPortalAKey: false,
+            portalAKey: restoredPortalAKey,
+            gateActive: levelGateActive,
+          } as GameState;
+        }
+        return next;
+      });
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [state.level, state.enemy]);
 
   const onResizeCell = useCallback((cellPx: number) => {
     setState((s) => ({ ...s, cellSizePx: cellPx }));

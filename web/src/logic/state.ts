@@ -25,6 +25,9 @@ export function createInitialState(): GameState {
     usedPortal: false,
     blockedTiles: [],
     currentMapping: mappings[0],
+    enemy: null as any,
+    initialKey: null as any,
+    initialPortalAKey: null as any,
   } as GameState;
 }
 
