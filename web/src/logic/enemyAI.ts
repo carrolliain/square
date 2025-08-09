@@ -4,7 +4,7 @@ import { isBlocked } from './blocked';
 
 // helpers previously used for advanced behaviors are intentionally removed to keep only roaming/LOS logic
 
-function isInsideAnyIsland(st: GameState, x: number, y: number): boolean {
+export function isInsideAnyIsland(st: GameState, x: number, y: number): boolean {
   const rects = st.islandRects || [];
   for (const r of rects) {
     if (isInsideRect(x, y, r.x, r.y, r.w, r.h)) return true;
@@ -26,7 +26,7 @@ function isAssetTile(st: GameState, x: number, y: number): boolean {
   return false;
 }
 
-function canStep(st: GameState, fromX: number, fromY: number, toX: number, toY: number): boolean {
+export function canStep(st: GameState, fromX: number, fromY: number, toX: number, toY: number): boolean {
   if (toX < 0 || toY < 0 || toX >= st.gridSize || toY >= st.gridSize) return false;
   if (isBlocked(toX, toY, st.blockedTiles)) return false;
   // Enemy1 cannot step onto asset tiles; exception: player's tile is allowed to enable collision
@@ -61,7 +61,7 @@ function canStep(st: GameState, fromX: number, fromY: number, toX: number, toY: 
 
 export type Direction = 'up' | 'right' | 'down' | 'left';
 
-const DIRS: Record<Direction, [number, number]> = {
+export const DIRS: Record<Direction, [number, number]> = {
   up: [0, -1], right: [1, 0], down: [0, 1], left: [-1, 0],
 };
 const OPP: Record<Direction, Direction> = { up: 'down', down: 'up', left: 'right', right: 'left' };
@@ -84,7 +84,7 @@ export function pickNextRoamDirection(st: GameState, prev?: Direction): Directio
   return viable[Math.floor(Math.random() * viable.length)] as Direction;
 }
 
-export function enemyTick(st: GameState): { pos: Point; dir: Direction; target: Point | null; stepBudget: number; visited: number[][] } {
+export function genericEnemyTick(st: GameState): { pos: Point; dir: Direction; target: Point | null; stepBudget: number; visited: number[][] } {
   // If we have an active target (player was in LOS) continue advancing towards it along current dir
   const cur = st.enemy!;
   let dir = (st.enemyDir ?? pickNextRoamDirection(st));
@@ -154,5 +154,7 @@ export function enemyTick(st: GameState): { pos: Point; dir: Direction; target: 
   // Stay put if no move
   return { pos: cur, dir, target, stepBudget, visited };
 }
+
+// enemy2 tick is defined in enemy1.ts to avoid circular imports; this file provides only shared helpers
 
 

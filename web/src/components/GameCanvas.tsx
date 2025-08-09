@@ -256,8 +256,27 @@ export function GameCanvas({ state, onResizeCell }: GameCanvasProps) {
       g.closePath();
       g.fill();
     });
+    const enemy2 = createSprite(S, (g, s) => {
+      g.clearRect(0, 0, s, s);
+      g.beginPath();
+      g.arc(s / 2, s / 2, s * 0.32, 0, Math.PI * 2);
+      g.fillStyle = '#ef5350';
+      g.fill();
+      g.lineWidth = 8;
+      g.strokeStyle = '#b71c1c';
+      g.stroke();
+      // facing arrow overlay
+      g.beginPath();
+      g.fillStyle = '#ffffff';
+      const aw = s * 0.12, al = s * 0.22;
+      g.moveTo(s/2, s/2 - al);
+      g.lineTo(s/2 - aw, s/2);
+      g.lineTo(s/2 + aw, s/2);
+      g.closePath();
+      g.fill();
+    });
 
-    return { player, door, key, keyBadge, portalAKey, lock, portalEntry, portalExit, portalBEntry, portalBExit, voidTile, blockTile, enemy };
+    return { player, door, key, keyBadge, portalAKey, lock, portalEntry, portalExit, portalBEntry, portalBExit, voidTile, blockTile, enemy, enemy2 };
   }, []);
 
   useEffect(() => {
@@ -420,6 +439,16 @@ export function GameCanvas({ state, onResizeCell }: GameCanvasProps) {
       c.translate((e.x + 0.5) * cellSizePx, (e.y + 0.5) * cellSizePx);
       c.rotate(angle);
       c.drawImage(sprites.enemy as any, -cellSizePx/2, -cellSizePx/2, cellSizePx, cellSizePx);
+      c.restore();
+    }
+    if ((state as any).enemy1b) {
+      const e = (state as any).enemy1b;
+      const dir = (state as any).enemy1bDir as ('up'|'right'|'down'|'left') | undefined;
+      const angle = dir === 'up' ? 0 : dir === 'right' ? Math.PI/2 : dir === 'down' ? Math.PI : dir === 'left' ? -Math.PI/2 : 0;
+      c.save();
+      c.translate((e.x + 0.5) * cellSizePx, (e.y + 0.5) * cellSizePx);
+      c.rotate(angle);
+      c.drawImage(sprites.enemy2 as any, -cellSizePx/2, -cellSizePx/2, cellSizePx, cellSizePx);
       c.restore();
     }
   }, [state, sprites]);

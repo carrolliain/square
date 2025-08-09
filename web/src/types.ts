@@ -40,12 +40,12 @@ export interface GameState {
   enemyTarget?: Point | null;
   enemyStepBudget?: number;
   enemyVisited?: number[][];
-  // Second enemy (appears level >= 24)
-  enemy2?: Point | null;
-  enemy2Dir?: 'up' | 'right' | 'down' | 'left';
-  enemy2Target?: Point | null;
-  enemy2StepBudget?: number;
-  enemy2Visited?: number[][];
+  // Second enemy instance (appears level >= 24)
+  enemy1b?: Point | null;
+  enemy1bDir?: 'up' | 'right' | 'down' | 'left';
+  enemy1bTarget?: Point | null;
+  enemy1bStepBudget?: number;
+  enemy1bVisited?: number[][];
 }
 
 

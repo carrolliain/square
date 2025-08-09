@@ -64,6 +64,11 @@ export function setupLevel(prev: GameState, internal?: { skipValidate?: boolean 
   (st as any).enemyTarget = null;
   (st as any).enemyStepBudget = 0;
   (st as any).enemyVisited = Array.from({ length: st.gridSize }, () => Array(st.gridSize).fill(0));
+  (st as any).enemy1b = null;
+  (st as any).enemy1bDir = 'down';
+  (st as any).enemy1bTarget = null;
+  (st as any).enemy1bStepBudget = 0;
+  (st as any).enemy1bVisited = Array.from({ length: st.gridSize }, () => Array(st.gridSize).fill(0));
   (st as any).initialKey = null;
   (st as any).initialPortalAKey = null;
 
@@ -390,6 +395,45 @@ export function setupLevel(prev: GameState, internal?: { skipValidate?: boolean 
     (st as any).enemyTarget = null;
     (st as any).enemyStepBudget = 0;
     (st as any).enemyVisited = Array.from({ length: st.gridSize }, () => Array(st.gridSize).fill(0));
+  }
+
+  // Place second enemy (enemy1b) for level 24+
+  if (level >= 24) {
+    const isInsideAnyIsland = (x: number, y: number): boolean => {
+      const rects = st.islandRects || [];
+      for (const r of rects) {
+        if (isInsideRect(x, y, r.x, r.y, r.w, r.h)) return true;
+      }
+      return false;
+    };
+    const reachable = bfsReachableOpenCells(st.gridSize, st.blockedTiles, (x, y) => isInsideAnyIsland(x, y));
+    const isAsset = (x: number, y: number) => (
+      (st.hole && st.hole.x === x && st.hole.y === y) ||
+      (st.key && st.key.x === x && st.key.y === y) ||
+      (st.portalEntry && st.portalEntry.x === x && st.portalEntry.y === y) ||
+      (st.portalExit && st.portalExit.x === x && st.portalExit.y === y) ||
+      (st.portalAEntry && st.portalAEntry.x === x && st.portalAEntry.y === y) ||
+      (st.portalAExit && st.portalAExit.x === x && st.portalAExit.y === y) ||
+      (st.portalBEntry && st.portalBEntry.x === x && st.portalBEntry.y === y) ||
+      (st.portalBExit && st.portalBExit.x === x && st.portalBExit.y === y) ||
+      ((st as any).portalAKey && (st as any).portalAKey.x === x && (st as any).portalAKey.y === y) ||
+      ((st as any).portalKey && (st as any).portalKey.x === x && (st as any).portalKey.y === y)
+    );
+    // Avoid enemy1 cell
+    let candidates = reachable.filter((p) => (p.x !== 0 || p.y !== 0) && !isTaken(p.x, p.y, st, {}) && !isAsset(p.x, p.y) && (!(st as any).enemy || p.x !== (st as any).enemy.x || p.y !== (st as any).enemy.y));
+    if (candidates.length === 0) candidates = reachable.filter((p) => p.x !== 0 || p.y !== 0);
+    let enemy1bPos = candidates.length ? candidates[randomInt(candidates.length)] : { x: st.gridSize - 2, y: st.gridSize - 2 } as Point;
+    const passable = (p: Point) => p.x >= 0 && p.y >= 0 && p.x < st.gridSize && p.y < st.gridSize && !isBlocked(p.x, p.y, st.blockedTiles) && !isInsideAnyIsland(p.x, p.y) && !isTaken(p.x, p.y, st, {});
+    if (!passable(enemy1bPos)) {
+      const nearStart: Point[] = [ { x: st.gridSize - 2, y: 0 }, { x: 0, y: st.gridSize - 2 }, { x: st.gridSize - 2, y: st.gridSize - 2 } ];
+      const pick = nearStart.find(passable);
+      if (pick) enemy1bPos = pick;
+    }
+    (st as any).enemy1b = enemy1bPos;
+    (st as any).enemy1bDir = 'right';
+    (st as any).enemy1bTarget = null;
+    (st as any).enemy1bStepBudget = 0;
+    (st as any).enemy1bVisited = Array.from({ length: st.gridSize }, () => Array(st.gridSize).fill(0));
   }
 
   if (level >= 8) {
