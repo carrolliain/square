@@ -11,6 +11,7 @@ import { useSwipe } from './hooks/useSwipe';
 
 function App() {
   const [state, setState] = useState<GameState>(() => setupLevel(createInitialState()));
+  const [isMobile, setIsMobile] = useState(false);
   // Support ?level=N in URL like original
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -28,6 +29,15 @@ function App() {
 
   useKeyboard(onKey);
   const swipe = useSwipe(onKey);
+
+  // Detect mobile (coarse pointer or narrow viewport)
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 820px), (pointer: coarse)');
+    const onChange = () => setIsMobile(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
 
   useEffect(() => {
     const onSetLevel = (e: Event) => {
@@ -88,27 +98,41 @@ function App() {
   }, []);
 
   const wrapStyle: React.CSSProperties = useMemo(() => ({
-    minHeight: '100vh', display: 'grid', gridTemplateRows: 'auto 1fr auto', background: '#181a20', color: '#fff'
+    minHeight: '100vh', display: 'grid', gridTemplateRows: 'auto 1fr', background: '#181a20', color: '#fff'
   }), []);
 
   const mainRowStyle: React.CSSProperties = useMemo(() => ({
-    width: '100%', maxWidth: 920, display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 16, padding: '10px'
-  }), []);
+    width: '100%', maxWidth: 920, display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr auto', alignItems: 'center', gap: 16, padding: '10px'
+  }), [isMobile]);
 
   return (
     <div style={wrapStyle}>
       <HUD level={state.level} gateActive={state.gateActive} hasKey={state.hasKey} />
       <div style={mainRowStyle}>
         <div style={{ display: 'grid', placeItems: 'center' }}>
-          <div style={{ textAlign: 'center', fontSize: 14, opacity: 0.7, marginBottom: 8 }}>Swipe anywhere or use the D-pad</div>
+          {!isMobile && (
+            <div style={{ textAlign: 'center', fontSize: 14, opacity: 0.7, marginBottom: 8 }}>Swipe anywhere or use the D-pad</div>
+          )}
           <div onTouchStart={swipe.onTouchStart} onTouchEnd={swipe.onTouchEnd}>
             <GameCanvas state={state} onResizeCell={onResizeCell} />
           </div>
         </div>
-        <div style={{ display: 'grid', placeItems: 'center' }}>
-          <DPad onPress={onKey} />
-        </div>
+        {!isMobile && (
+          <div style={{ display: 'grid', placeItems: 'center' }}>
+            <DPad onPress={onKey} />
+          </div>
+        )}
       </div>
+      {isMobile && (
+        <div style={{
+          position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 1000,
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          padding: '10px 0 calc(env(safe-area-inset-bottom, 0px) + 12px)',
+          background: 'linear-gradient(to top, rgba(24,26,32,0.95), rgba(24,26,32,0))'
+        }}>
+          <DPad onPress={onKey} uiSize={56} />
+        </div>
+      )}
     </div>
   );
 }
