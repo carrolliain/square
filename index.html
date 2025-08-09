@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Rotating Controls Puzzle (Mobile)</title>
+<style>
+  :root { --ui-size: 88px; }
+  html, body { height: 100%; margin: 0; background:#181a20; color:#fff; font-family: system-ui, Arial, sans-serif; }
+  .wrap { height: 100%; display: grid; grid-template-rows: 1fr auto; place-items: center; gap: 10px; }
+  canvas { background:#2a2f3a; border:3px solid #fff; border-radius:12px; touch-action:none; }
+  .hud { width: 100%; max-width: 520px; display:flex; justify-content:space-between; align-items:center; padding: 6px 10px; box-sizing: border-box; }
+  .hud span { opacity: .9; }
+  /* D-pad */
+  .dpad {
+    position: relative; width: calc(var(--ui-size) * 3); height: calc(var(--ui-size) * 3);
+    margin: 6px auto 14px; touch-action: none;
+  }
+  .btn {
+    position: absolute; width: var(--ui-size); height: var(--ui-size);
+    background: #3b4151; border:2px solid #9aa4ff; border-radius:14px;
+    display:grid; place-items:center; font-size:22px; user-select:none; -webkit-user-select:none;
+    box-shadow: 0 4px 12px rgba(0,0,0,.35);
+  }
+  .btn:active { transform: scale(0.98); }
+  .up    { left: calc(var(--ui-size)); top: 0; }
+  .down  { left: calc(var(--ui-size)); top: calc(var(--ui-size) * 2); }
+  .left  { left: 0; top: calc(var(--ui-size)); }
+  .right { left: calc(var(--ui-size) * 2); top: calc(var(--ui-size)); }
+  .hint { text-align:center; font-size: 14px; opacity:.7; margin-bottom:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="game" width="400" height="400" aria-label="Game canvas"></canvas>
+
+  <div class="hud">
+    <span id="levelLabel">Level 1</span>
+  </div>
+
+  <div class="hint">Swipe anywhere or use the D-pad</div>
+
+  <div class="dpad" id="dpad">
+    <div class="btn up"    data-key="ArrowUp">▲</div>
+    <div class="btn left"  data-key="ArrowLeft">◀</div>
+    <div class="btn right" data-key="ArrowRight">▶</div>
+    <div class="btn down"  data-key="ArrowDown">▼</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const levelLabel = document.getElementById("levelLabel");
+  const modeLabel = document.getElementById("modeLabel");
+
+  let gridSize = 8; // 8x8 for levels 1–10; 12x12 for 11+
+  let cellSize = 50;  // recalculated on resize
+  let level = 1;
+  let player = { x: 0, y: 0 };
+  let hole = { x: gridSize - 1, y: gridSize - 1 };
+  // Mechanic #2 (from level 6): key unlocks gate that blocks the hole
+  let hasKey = false;
+  /** @type {{x:number,y:number}|null} */
+  let key = null;
+  let gateActive = false; // when true and hasKey is false, hole is locked
+  // Mechanic #3 (from level 11): portals (one-way)
+  /** @type {{x:number,y:number}|null} */
+  let portalEntry = null;
+  /** @type {{x:number,y:number}|null} */
+  let portalExit = null;
+  let usedPortal = false; // must use portal to access door from level 11+
+  // Visual consistency: entry and exit share the same color
+  let portalColor = "#64b5f6";
+  /** @type {{x:number,y:number}[]} */
+  let blockedTiles = []; // visual "water"/void tiles you cannot enter (make door an island)
+
+  function sameCell(a, b) { return !!a && !!b && a.x === b.x && a.y === b.y; }
+  // Check if a cell is already occupied, with ability to ignore a specific entity during placement
+  function isTaken(x, y, opts = {}) {
+    const { ignoreHole = false, ignoreKey = false, ignoreEntry = false, ignoreExit = false } = opts;
+    if (x === 0 && y === 0) return true; // start
+    if (!ignoreHole && hole && hole.x === x && hole.y === y) return true;
+    if (!ignoreKey && key && key.x === x && key.y === y) return true;
+    if (!ignoreEntry && portalEntry && portalEntry.x === x && portalEntry.y === y) return true;
+    if (!ignoreExit && portalExit && portalExit.x === x && portalExit.y === y) return true;
+    return false;
+  }
+
+  // Control mappings (four rotations)
+  const mappings = [
+    { ArrowUp: [0,-1], ArrowRight: [1,0], ArrowDown: [0,1], ArrowLeft: [-1,0] }, // Normal
+    { ArrowUp: [1,0], ArrowRight: [0,1], ArrowDown: [-1,0], ArrowLeft: [0,-1] }, // Rot 90
+    { ArrowUp: [0,1], ArrowRight: [-1,0], ArrowDown: [0,-1], ArrowLeft: [1,0] }, // Rot 180
+    { ArrowUp: [-1,0], ArrowRight: [0,-1], ArrowDown: [1,0], ArrowLeft: [0,1] }, // Rot 270
+  ];
+  const mappingNames = ["Normal", "↻ 90°", "↻ 180°", "↻ 270°"];
+  let currentMapping = mappings[0]; // level 1 normal; later levels random
+
+  function resizeCanvas() {
+    // Fit canvas to the smallest viewport dimension with some margin
+    const margin = 24;
+    const w = window.innerWidth - margin * 2;
+    const h = window.innerHeight - 220; // leave room for HUD + D-pad
+    const side = Math.max(240, Math.min(w, h));
+
+    // Hi-DPI scale
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.style.width = side + "px";
+    canvas.style.height = side + "px";
+    canvas.width = Math.floor(side * dpr);
+    canvas.height = Math.floor(side * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Logical drawing size (in CSS pixels)
+    cellSize = Math.floor(side / gridSize);
+    draw();
+  }
+
+  function drawGrid() {
+    ctx.strokeStyle = "#4a5161";
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= gridSize; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i*cellSize, 0);
+      ctx.lineTo(i*cellSize, gridSize*cellSize);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, i*cellSize);
+      ctx.lineTo(gridSize*cellSize, i*cellSize);
+      ctx.stroke();
+    }
+  }
+
+  function draw() {
+    // Clear
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Grid
+    drawGrid();
+
+    // Water/void tiles (draw under the hole/door)
+    drawWaterTiles();
+
+    // Hole
+    ctx.fillStyle = "#ffd54a";
+    ctx.fillRect(hole.x*cellSize, hole.y*cellSize, cellSize, cellSize);
+    // Door overlay always on exit
+    drawDoorIcon(hole.x, hole.y);
+    // Gate overlay (lock) if active and key not collected
+    if (gateActive && !hasKey) {
+      drawLockOverlay(hole.x, hole.y);
+    }
+
+    // Key
+    if (key) {
+      drawKeyIcon(key.x, key.y);
+    }
+
+    // Portals
+    if (portalEntry) drawPortalEntry(portalEntry.x, portalEntry.y);
+    if (portalExit) drawPortalExit(portalExit.x, portalExit.y);
+
+    // Player
+    ctx.fillStyle = "#66e0ff";
+    ctx.fillRect(player.x*cellSize, player.y*cellSize, cellSize, cellSize);
+    // Show key carried by player as a small badge overlay
+    if (hasKey) {
+      drawKeyBadge(player.x, player.y);
+    }
+
+    // Labels (HUD shows outside canvas)
+    const status = gateActive ? (hasKey ? " 🔑" : " 🔒") : "";
+    levelLabel.textContent = `Level ${level}${status}`;
+  }
+
+  function vibrate(ms=20){ if (navigator.vibrate) navigator.vibrate(ms); }
+
+  function tryMove(keyName) {
+    const mapping = currentMapping;
+    const delta = mapping[keyName];
+    if (!delta) return;
+    const [dx, dy] = delta;
+
+    let nx = player.x + dx;
+    let ny = player.y + dy;
+    if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
+      // Block impassable water/void
+      if (isBlocked(nx, ny)) {
+        vibrate(6);
+        draw();
+        return;
+      }
+      // Block entering hole if gate is locked or portal not used (from level 11)
+      if ((nx === hole.x && ny === hole.y) && ((gateActive && !hasKey) || (level >= 11 && !usedPortal))) {
+        vibrate(6);
+        draw();
+        return;
+      }
+
+      // Step into the next cell
+      let cx = nx;
+      let cy = ny;
+
+      // Pick up key if we land on it
+      if (key && cx === key.x && cy === key.y) {
+        hasKey = true;
+        key = null;
+        gateActive = false;
+        vibrate(30);
+      }
+
+      // Portal teleport if we land on entry
+      if (portalEntry && portalExit && cx === portalEntry.x && cy === portalEntry.y) {
+        cx = portalExit.x;
+        cy = portalExit.y;
+        usedPortal = true;
+        vibrate(40);
+      }
+
+      // Commit movement
+      player.x = cx;
+      player.y = cy;
+      vibrate(10);
+    }
+
+    if (player.x === hole.x && player.y === hole.y) {
+      nextLevel();
+    }
+    draw();
+  }
+
+  function nextLevel() {
+    level++;
+    setupLevel();
+  }
+
+  // Extracted level setup so we can jump to any level for testing
+  function setupLevel() {
+    // Adjust grid size based on level
+    const desiredGrid = level >= 11 ? 12 : 8;
+    const gridChanged = gridSize !== desiredGrid;
+    gridSize = desiredGrid;
+
+    player = { x: 0, y: 0 };
+    // Ensure hole isn't at start
+    do {
+      hole = {
+        x: Math.floor(Math.random() * gridSize),
+        y: Math.floor(Math.random() * gridSize)
+      };
+    } while (hole.x === 0 && hole.y === 0);
+    // Reset dynamic entities for fresh placement
+    key = null;
+    portalEntry = null;
+    portalExit = null;
+
+    // Default key/gate off
+    gateActive = false;
+    hasKey = false;
+    key = null;
+    if (level >= 6 && level < 11) {
+      gateActive = true;
+      // Place key on a random free cell not at start or hole
+      do {
+        key = {
+          x: Math.floor(Math.random() * gridSize),
+          y: Math.floor(Math.random() * gridSize)
+        };
+      } while (isTaken(key.x, key.y, { ignoreKey: true }));
+    } else {
+      gateActive = false;
+      hasKey = false;
+      key = null;
+    }
+
+    // Set up portals from level 11 onwards
+    usedPortal = false;
+    portalEntry = null;
+    portalExit = null;
+    blockedTiles = [];
+    if (level >= 11) {
+      // Safety cap to avoid infinite loops
+      let guard = 0;
+      // Build a rectangular island (at least 5x5) surrounded by a one-tile water ring
+      const islandW = Math.min(5, gridSize - 2);
+      const islandH = Math.min(5, gridSize - 2);
+      let ix, iy;
+      // choose island position so the surrounding water ring doesn't cover the start (0,0)
+      do {
+        ix = 1 + Math.floor(Math.random() * (gridSize - islandW - 1));
+        iy = 1 + Math.floor(Math.random() * (gridSize - islandH - 1));
+        guard++;
+      } while (
+        (0 >= ix - 1 && 0 <= ix + islandW && 0 >= iy - 1 && 0 <= iy + islandH) && guard < 200
+      );
+
+      if (guard >= 200) {
+        // Fallback: default island near far corner
+        ix = gridSize - islandW - 1;
+        iy = gridSize - islandH - 1;
+      }
+
+      const innerXMin = ix + 1;
+      const innerXMax = ix + islandW - 2;
+      const innerYMin = iy + 1;
+      const innerYMax = iy + islandH - 2;
+
+      // Place door (hole) inside inner area ensuring open neighbors around it
+      guard = 0;
+      do {
+        hole = {
+          x: innerXMin + Math.floor(Math.random() * (innerXMax - innerXMin + 1)),
+          y: innerYMin + Math.floor(Math.random() * (innerYMax - innerYMin + 1)),
+        };
+        guard++;
+      } while (isTaken(hole.x, hole.y, { ignoreHole: true }) && guard < 200);
+
+      // Place exit portal inside inner area distinct from door
+      guard = 0;
+      do {
+        portalExit = {
+          x: innerXMin + Math.floor(Math.random() * (innerXMax - innerXMin + 1)),
+          y: innerYMin + Math.floor(Math.random() * (innerYMax - innerYMin + 1)),
+        };
+        guard++;
+      } while (isTaken(portalExit.x, portalExit.y, { ignoreExit: true }) && guard < 200);
+      if (guard >= 200) {
+        portalExit = { x: hole.x, y: Math.min(innerYMax, hole.y + 1) };
+      }
+
+      // Build water ring around the island rectangle
+      for (let x = ix - 1; x <= ix + islandW; x++) {
+        for (let y = iy - 1; y <= iy + islandH; y++) {
+          const inRect = x >= ix && x < ix + islandW && y >= iy && y < iy + islandH;
+          if (!inRect && x >= 0 && x < gridSize && y >= 0 && y < gridSize) {
+            blockedTiles.push({ x, y });
+          }
+        }
+      }
+
+      // Place portal entry on mainland (no overlaps, not blocked/island, not orth-adjacent to exit)
+      guard = 0;
+      do {
+        portalEntry = {
+          x: Math.floor(Math.random() * gridSize),
+          y: Math.floor(Math.random() * gridSize)
+        };
+        guard++;
+      } while (
+        isTaken(portalEntry.x, portalEntry.y, {}) ||
+        isInsideRect(portalEntry.x, portalEntry.y, ix, iy, islandW, islandH) ||
+        isBlocked(portalEntry.x, portalEntry.y) ||
+        isOrthAdjacent(portalEntry.x, portalEntry.y, portalExit.x, portalExit.y)
+      && guard < 400);
+      if (guard >= 400) {
+        // Fallback to a known safe point on mainland
+        portalEntry = { x: 1, y: 1 };
+        if (isTaken(1,1,{}) || isBlocked(1,1) || isInsideRect(1,1,ix,iy,islandW,islandH)) {
+          // try another
+          portalEntry = { x: gridSize - 2, y: 1 };
+        }
+      }
+
+      // If gate is active at 11+ (allowed), ensure key is placed after island so it doesn't spawn in water
+      if (level >= 11 && level >= 6) {
+        if (gateActive) {
+          guard = 0;
+          do {
+            key = {
+              x: Math.floor(Math.random() * gridSize),
+              y: Math.floor(Math.random() * gridSize)
+            };
+            guard++;
+          } while (
+            (isTaken(key.x, key.y, { ignoreKey: true }) ||
+             isInsideRect(key.x, key.y, ix, iy, islandW, islandH) ||
+             isBlocked(key.x, key.y))
+          && guard < 400);
+          if (guard >= 400) {
+            key = { x: 1, y: gridSize - 2 };
+          }
+        }
+      }
+    }
+
+    // Randomize control mapping each level (level 1 stays normal)
+    if (level === 1) {
+      currentMapping = mappings[0];
+    } else {
+      // Avoid repeating the exact same mapping consecutively for better clarity
+      let nextMap;
+      do {
+        nextMap = mappings[Math.floor(Math.random() * mappings.length)];
+      } while (nextMap === currentMapping);
+      currentMapping = nextMap;
+    }
+
+    // If grid size changed, recompute canvas scaling/cellSize before drawing
+    if (gridChanged) {
+      resizeCanvas();
+    } else {
+      draw();
+    }
+  }
+
+  function isInsideRect(x, y, rx, ry, rw, rh) {
+    return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+  }
+
+  function isOrthAdjacent(x1, y1, x2, y2) {
+    return Math.abs(x1 - x2) + Math.abs(y1 - y2) === 1;
+  }
+
+  function isBlocked(x, y) {
+    for (let i = 0; i < blockedTiles.length; i++) {
+      const t = blockedTiles[i];
+      if (t.x === x && t.y === y) return true;
+    }
+    return false;
+  }
+
+  // Geometry helpers used during level 11+ placement
+  function isInsideRect(x, y, rx, ry, rw, rh) {
+    return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+  }
+
+  function isOrthAdjacent(x1, y1, x2, y2) {
+    return Math.abs(x1 - x2) + Math.abs(y1 - y2) === 1;
+  }
+
+  function drawWaterTiles() {
+    if (!blockedTiles.length) return;
+    for (const t of blockedTiles) {
+      const x = t.x * cellSize;
+      const y = t.y * cellSize;
+      const grad = ctx.createLinearGradient(x, y, x + cellSize, y + cellSize);
+      grad.addColorStop(0, "#1e3a5f");
+      grad.addColorStop(1, "#0d2747");
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, y, cellSize, cellSize);
+    }
+  }
+
+  // Utility to convert hex color to rgba string
+  function hexToRgba(hex, alpha) {
+    const h = hex.replace('#','');
+    const bigint = parseInt(h, 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  // Draw a door icon over the goal cell
+  function drawDoorIcon(gx, gy) {
+    const x = gx * cellSize;
+    const y = gy * cellSize;
+    const pad = cellSize * 0.12;
+    const w = cellSize - pad * 2;
+    const h = cellSize - pad * 2;
+    ctx.fillStyle = "#6d4c41"; // brown door
+    ctx.strokeStyle = "#3e2723";
+    ctx.lineWidth = Math.max(2, cellSize * 0.06);
+    ctx.beginPath();
+    ctx.rect(x + pad, y + pad, w, h);
+    ctx.fill();
+    ctx.stroke();
+    // doorknob
+    ctx.fillStyle = "#ffd54a";
+    ctx.beginPath();
+    ctx.arc(x + pad + w * 0.8, y + pad + h * 0.55, Math.max(2, cellSize * 0.06), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Portal visuals (matched color for consistency)
+  function drawPortalEntry(gx, gy) {
+    const x = gx * cellSize;
+    const y = gy * cellSize;
+    const cx = x + cellSize / 2;
+    const cy = y + cellSize / 2;
+    const r = cellSize * 0.38;
+    // Outer ring
+    ctx.strokeStyle = portalColor;
+    ctx.lineWidth = Math.max(3, cellSize * 0.08);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    // Inner swirl
+    ctx.strokeStyle = portalColor;
+    ctx.lineWidth = Math.max(2, cellSize * 0.05);
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.6, cy - r * 0.1);
+    ctx.quadraticCurveTo(cx, cy - r * 0.8, cx + r * 0.6, cy - r * 0.1);
+    ctx.quadraticCurveTo(cx, cy + r * 0.4, cx - r * 0.5, cy + r * 0.2);
+    ctx.stroke();
+  }
+
+  function drawPortalExit(gx, gy) {
+    const x = gx * cellSize;
+    const y = gy * cellSize;
+    // Glowing pad
+    const grad = ctx.createRadialGradient(x + cellSize/2, y + cellSize/2, 2, x + cellSize/2, y + cellSize/2, cellSize/2);
+    const glow0 = hexToRgba(portalColor, 0.75);
+    const glow1 = hexToRgba(portalColor, 0.2);
+    grad.addColorStop(0, glow0);
+    grad.addColorStop(1, glow1);
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, y, cellSize, cellSize);
+    // Exit arrow
+    ctx.strokeStyle = portalColor;
+    ctx.lineWidth = Math.max(2, cellSize * 0.06);
+    ctx.beginPath();
+    ctx.moveTo(x + cellSize * 0.25, y + cellSize * 0.65);
+    ctx.lineTo(x + cellSize * 0.5, y + cellSize * 0.35);
+    ctx.lineTo(x + cellSize * 0.75, y + cellSize * 0.65);
+    ctx.stroke();
+  }
+
+  // Simple key icon
+  function drawKeyIcon(gx, gy) {
+    const x = gx * cellSize;
+    const y = gy * cellSize;
+    const cx = x + cellSize * 0.5;
+    const cy = y + cellSize * 0.5;
+    const r = Math.max(4, cellSize * 0.18);
+    ctx.fillStyle = "#ffd54a";
+    ctx.strokeStyle = "#b9922c";
+    ctx.lineWidth = Math.max(2, cellSize * 0.08);
+    // Ring
+    ctx.beginPath();
+    ctx.arc(cx - r * 0.6, cy - r * 0.2, r * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Stem
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.1, cy);
+    ctx.lineTo(cx + r * 0.9, cy);
+    ctx.stroke();
+    // Teeth
+    ctx.beginPath();
+    ctx.moveTo(cx + r * 0.4, cy);
+    ctx.lineTo(cx + r * 0.4, cy + r * 0.5);
+    ctx.moveTo(cx + r * 0.7, cy);
+    ctx.lineTo(cx + r * 0.7, cy + r * 0.35);
+    ctx.stroke();
+  }
+
+  // Small key badge rendered inside player's cell when carrying the key
+  function drawKeyBadge(gx, gy) {
+    const x = gx * cellSize;
+    const y = gy * cellSize;
+    const pad = cellSize * 0.16;
+    const cx = x + cellSize - pad - cellSize * 0.18;
+    const cy = y + pad + cellSize * 0.18;
+    const r = Math.max(3, cellSize * 0.09);
+    ctx.save();
+    ctx.fillStyle = "#ffd54a";
+    ctx.strokeStyle = "#b9922c";
+    ctx.lineWidth = Math.max(1, cellSize * 0.045);
+    // Ring
+    ctx.beginPath();
+    ctx.arc(cx - r * 0.6, cy - r * 0.2, r * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Stem
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.1, cy);
+    ctx.lineTo(cx + r * 1.0, cy);
+    ctx.stroke();
+    // Teeth
+    ctx.beginPath();
+    ctx.moveTo(cx + r * 0.45, cy);
+    ctx.lineTo(cx + r * 0.45, cy + r * 0.6);
+    ctx.moveTo(cx + r * 0.75, cy);
+    ctx.lineTo(cx + r * 0.75, cy + r * 0.45);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Lock overlay drawn over the hole when locked
+  function drawLockOverlay(gx, gy) {
+    const x = gx * cellSize;
+    const y = gy * cellSize;
+    const pad = cellSize * 0.18;
+    const w = cellSize - pad * 2;
+    const h = cellSize - pad * 2;
+    // Body
+    ctx.fillStyle = "#3b4151";
+    ctx.strokeStyle = "#9aa4ff";
+    ctx.lineWidth = Math.max(2, cellSize * 0.06);
+    ctx.beginPath();
+    ctx.rect(x + pad, y + pad + h * 0.25, w, h * 0.75);
+    ctx.fill();
+    ctx.stroke();
+    // Shackle
+    ctx.beginPath();
+    const sx = x + pad + w * 0.2;
+    const sy = y + pad + h * 0.25;
+    const sw = w * 0.6;
+    const sh = h * 0.45;
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(sx, sy - sh * 0.6, sx + sw / 2, sy - sh * 0.6);
+    ctx.quadraticCurveTo(sx + sw, sy - sh * 0.6, sx + sw, sy);
+    ctx.stroke();
+  }
+
+  // Keyboard (desktop)
+  window.addEventListener("keydown", (e) => {
+    if (["ArrowUp","ArrowRight","ArrowDown","ArrowLeft"].includes(e.key)) {
+      e.preventDefault();
+      tryMove(e.key);
+      return;
+    }
+    // Press L to jump to a level for testing
+    if (e.key === 'l' || e.key === 'L') {
+      e.preventDefault();
+      const input = prompt("Start at level:", String(level));
+      const num = input ? parseInt(input, 10) : NaN;
+      if (Number.isFinite(num) && num >= 1) {
+        level = num;
+        setupLevel();
+      }
+    }
+  }, { passive: false });
+
+  // Touch: swipe anywhere on canvas
+  let touchStart = null;
+  const SWIPE_THRESHOLD = 18; // px
+  function onTouchStart(e){
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    touchStart = { x: t.clientX, y: t.clientY };
+  }
+  function onTouchEnd(e){
+    if (!touchStart) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStart.x;
+    const dy = t.clientY - touchStart.y;
+    const adx = Math.abs(dx), ady = Math.abs(dy);
+    if (Math.max(adx, ady) >= SWIPE_THRESHOLD) {
+      if (adx > ady) {
+        tryMove(dx > 0 ? "ArrowRight" : "ArrowLeft");
+      } else {
+        tryMove(dy > 0 ? "ArrowDown" : "ArrowUp");
+      }
+    }
+    touchStart = null;
+  }
+  canvas.addEventListener("touchstart", onTouchStart, { passive: false });
+  canvas.addEventListener("touchend", onTouchEnd, { passive: false });
+
+  // On-screen D-pad (works with mouse or touch)
+  document.getElementById("dpad").addEventListener("pointerdown", (e) => {
+    const btn = e.target.closest(".btn");
+    if (!btn) return;
+    e.preventDefault();
+    const key = btn.getAttribute("data-key");
+    tryMove(key);
+  });
+
+  // Initial layout
+  window.addEventListener("resize", resizeCanvas);
+  resizeCanvas();
+
+  // Support ?level=N in URL for testing
+  (function applyStartLevelFromURL(){
+    const params = new URLSearchParams(location.search);
+    const raw = params.get('level');
+    const num = raw ? parseInt(raw, 10) : NaN;
+    if (Number.isFinite(num) && num >= 1) level = num;
+  })();
+
+  setupLevel();
+})();
+</script>
+</body>
+</html>
